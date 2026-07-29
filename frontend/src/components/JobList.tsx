@@ -1,4 +1,4 @@
-import { deleteJob, downloadUrl } from "../api";
+import { deleteJob, downloadUrl, previewUrl } from "../api";
 import type { DocumentJob, JobStatus } from "../types";
 
 interface Props {
@@ -64,9 +64,19 @@ export function JobList({ jobs, onChanged }: Props) {
                 </td>
                 <td>
                   {j.status === "complete" && j.output_filename ? (
-                    <a className="download" href={downloadUrl(j.id)}>
-                      Download .docx
-                    </a>
+                    <span className="doc-links">
+                      <a
+                        className="view"
+                        href={previewUrl(j.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        View
+                      </a>
+                      <a className="download" href={downloadUrl(j.id)}>
+                        Download .docx
+                      </a>
+                    </span>
                   ) : (
                     <span style={{ color: "#9ca3af" }}>—</span>
                   )}

@@ -13,7 +13,6 @@ export function UploadForm({ onCreated }: Props) {
   const [title, setTitle] = useState("");
   const [version, setVersion] = useState("v1");
   const [ownerName, setOwnerName] = useState("");
-  const [ownerTitle, setOwnerTitle] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [content, setContent] = useState("");
@@ -26,7 +25,6 @@ export function UploadForm({ onCreated }: Props) {
     setTitle("");
     setVersion("v1");
     setOwnerName("");
-    setOwnerTitle("");
     setOwnerEmail("");
     setFile(null);
     setContent("");
@@ -58,7 +56,6 @@ export function UploadForm({ onCreated }: Props) {
         title: title.trim(),
         version: version.trim() || "v1",
         ownerName: ownerName.trim(),
-        ownerTitle: ownerTitle.trim() || undefined,
         ownerEmail: ownerEmail.trim(),
         file: mode === "upload" ? file : null,
         content: mode === "paste" ? content : undefined,
@@ -105,16 +102,6 @@ export function UploadForm({ onCreated }: Props) {
             value={ownerName}
             onChange={(e) => setOwnerName(e.target.value)}
             placeholder="Ryan Ware"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="ownerTitle">Owner role (optional)</label>
-          <input
-            id="ownerTitle"
-            type="text"
-            value={ownerTitle}
-            onChange={(e) => setOwnerTitle(e.target.value)}
-            placeholder="Software Developer"
           />
         </div>
         <div className="field">

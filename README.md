@@ -3,10 +3,8 @@
 An internal web app for Tartigrade (TTG). Upload **any** content — a Word doc, PDF,
 spreadsheet, or pasted text — and get back a **standardized, TTG-branded Word
 document** (`.docx`) that follows the company report standard exactly: Calibri,
-brand green (`#5AA66A`) for labels, bullets, and branding only, a right-aligned
-title page with Document Version / Document Owners / Date, a table of contents,
-a small gray running header with a brand mark and rule, page-number-only
-footers, and numbered section headings.
+brand green (`#1F7A4D`) for labels and branding only, a right-aligned title page,
+a table of contents, running headers, and numbered section headings.
 
 It productizes the workflow your existing skills do by hand (`summary_generator`,
 `excel_summary_generator`, `ttg_report_generator`) into one upload-and-download tool
@@ -148,11 +146,12 @@ is enough. Edit the host in `k8s/ingress.yaml`.
 | GET | `/api/documents` | list jobs (newest first) |
 | GET | `/api/documents/:id` | one job |
 | GET | `/api/documents/:id/download` | download the rendered `.docx` |
+| GET | `/api/documents/:id/preview` | **view the standardized document in the browser** (HTML) |
 | DELETE | `/api/documents/:id` | delete job + file |
 | GET | `/healthz`, `/readyz` | health / readiness |
 
 Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (required),
-`ownerTitle` (optional), `ownerEmail` (required).
+`ownerEmail` (required).
 
 ---
 
@@ -186,26 +185,23 @@ Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (requ
   runs 1 replica. To scale out, switch to a ReadWriteMany volume or store the `.docx`
   in object storage (S3/GCS) and stream on download.
 - **The TTG standard** lives in one place: the constants at the top of
-  `backend/src/services/renderTtgDocx.ts` (green `#5AA66A`, near-black text
-  `#111111`, gray header/footer `#666666`, sizes, address block). These were
-  calibrated by sampling actual pixel colors from the reference template
-  (`Talent ↔ Connect Bridge — Employee Onboarding Feature Spec.pdf`), not
-  guessed from a brand guide — change them there and every future document
-  updates. The title page's "Date" field is stamped with the render date
-  automatically; `ownerTitle`, if supplied, prints as a role line under the
-  owner's name.
+  `backend/src/services/renderTtgDocx.ts` (green, sizes, address block). Change them
+  there and every future document updates. `renderTtgHtml.ts` imports those same
+  constants, so the "View" preview and the downloaded `.docx` can never drift apart.
+- **Matches the reference standard exactly.** Section headings (H1-H4) and the
+  Table of Contents title are brand green, bold — headings are "labels" per the
+  standard, same as the title-page labels. The running header on content pages is
+  a small black title line with a green brand mark, and the footer is just the
+  page number, centered — matching the reference feature-spec template precisely
+  (not a large green title or a filename in the footer).
+- **View in browser.** Every completed document gets a "View" link (next to
+  "Download .docx") that opens `/api/documents/:id/preview` — a styled HTML render
+  of the same `StructuredDoc` the `.docx` was built from, so you can review a
+  document without opening Word. It renders directly from the stored section data
+  (not a docx→HTML conversion, which loses direct color/size formatting), so it's
+  a full round-trip of the same styling — not just an approximation.
 - **Logo.** The title page carries the TTG wordmark (spiral + "TARTIGRADE LIMITED")
   top-left, aligned with the address block, matching the feature-spec template. It is
   embedded as base64 in `backend/src/assets/logo.ts` (no file-path or Docker-copy
-  concerns); replace that file to swap the mark. A small version of the same mark
-  appears top-right in the running header on every other page. A separate
-  decorative asset, `backend/src/assets/dots.ts`, reproduces the graduated
-  spiral of brand-green dots that sits bottom-left on the title page; it is a
-  generated approximation of the reference graphic, not a pixel-exact trace —
-  swap that file if you have the original vector art.
-- **Inline code spans.** Text wrapped in backticks (`` `like/this` ``) anywhere
-  in a paragraph or bullet renders in green Consolas, matching how the
-  reference document styles file paths, routes, and identifiers inline.
-- **Ordered lists.** `StructuredSection.bulletStyle` / `StructuredSubsection.bulletStyle`
-  can be set to `"number"` for a green, bold decimal list (e.g. build-order steps),
-  or left as the default `"bullet"` for a green dot list.
+  concerns); replace that file to swap the mark. The same base64 asset is reused by
+  the HTML preview.

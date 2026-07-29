@@ -13,7 +13,6 @@ export interface DocumentJob {
   title: string;
   version: string;
   owner_name: string;
-  owner_title: string | null;
   owner_email: string;
   source_kind: SourceKind;
   source_filename: string | null;
@@ -30,7 +29,6 @@ export interface CreateJobInput {
   title: string;
   version: string;
   ownerName: string;
-  ownerTitle: string | null;
   ownerEmail: string;
   sourceKind: SourceKind;
   sourceFilename: string | null;

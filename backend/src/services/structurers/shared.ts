@@ -198,14 +198,7 @@ function condense(paragraphs: string[], maxSentences: number): string[] {
  * only when the classifier routed content to them.
  */
 export async function assemble(
-  input: {
-    title: string;
-    version: string;
-    ownerName: string;
-    ownerTitle?: string;
-    ownerEmail: string;
-    content: string;
-  },
+  input: { title: string; version: string; ownerName: string; ownerEmail: string; content: string },
   classifier: ParagraphClassifier
 ): Promise<StructuredDoc> {
   const paragraphs = splitParagraphs(input.content);
@@ -273,9 +266,7 @@ export async function assemble(
     title: input.title,
     version: input.version,
     ownerName: input.ownerName,
-    ownerTitle: input.ownerTitle,
     ownerEmail: input.ownerEmail,
-    date: new Date().toISOString().slice(0, 10),
     sections,
   };
 }

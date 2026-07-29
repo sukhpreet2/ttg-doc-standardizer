@@ -236,6 +236,23 @@ a.download {
 a.download:hover {
   text-decoration: underline;
 }
+.doc-links {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+a.view {
+  color: #374151;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 3px 9px;
+}
+a.view:hover {
+  border-color: var(--ttg-green);
+  color: var(--ttg-green);
+}
 
 .empty {
   color: var(--muted);

@@ -11,7 +11,6 @@ export interface DocumentJob {
   title: string;
   version: string;
   owner_name: string;
-  owner_title: string | null;
   owner_email: string;
   source_kind: "upload" | "paste";
   source_filename: string | null;

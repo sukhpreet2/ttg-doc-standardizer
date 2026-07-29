@@ -20,7 +20,6 @@ export interface StandardizeInput {
   title: string;
   version: string;
   ownerName: string;
-  ownerTitle?: string;
   ownerEmail: string;
   file?: File | null;
   content?: string;
@@ -31,7 +30,6 @@ export async function standardize(input: StandardizeInput): Promise<DocumentJob>
   form.append("title", input.title);
   form.append("version", input.version);
   form.append("ownerName", input.ownerName);
-  if (input.ownerTitle) form.append("ownerTitle", input.ownerTitle);
   form.append("ownerEmail", input.ownerEmail);
 
   if (input.file) form.append("file", input.file);
@@ -61,4 +59,8 @@ export async function deleteJob(id: number): Promise<void> {
 
 export function downloadUrl(id: number): string {
   return `${BASE}/${id}/download`;
+}
+
+export function previewUrl(id: number): string {
+  return `${BASE}/${id}/preview`;
 }
