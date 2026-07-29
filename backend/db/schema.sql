@@ -16,13 +16,19 @@ CREATE TABLE IF NOT EXISTS document_job (
                     CHECK (status IN ('pending','extracting','structuring','rendering','complete','failed')),
 
   structured_json JSONB,             -- the section structure the renderer used
-  output_filename VARCHAR(512),      -- rendered .docx name in OUTPUT_DIR
+  output_filename VARCHAR(512),      -- rendered .docx display filename
+  output_bytes    BYTEA,             -- the rendered .docx itself, stored in the DB
+                                      -- (Render's free plan has no persistent disk —
+                                      --  files written to disk vanish on restart/redeploy)
   error           TEXT,              -- last error, if failed
 
   created_by      VARCHAR(255),      -- from the auth proxy (X-User-Email)
   created_at      TIMESTAMP NOT NULL DEFAULT now(),
   updated_at      TIMESTAMP NOT NULL DEFAULT now()
 );
+
+-- Safe to re-run: adds the column for deployments that predate it.
+ALTER TABLE document_job ADD COLUMN IF NOT EXISTS output_bytes BYTEA;
 
 CREATE INDEX IF NOT EXISTS idx_document_job_created_at ON document_job (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_document_job_status     ON document_job (status);

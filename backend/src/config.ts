@@ -28,6 +28,9 @@ export const config = {
   transformersOffline: (process.env.TRANSFORMERS_OFFLINE ?? "true") !== "false",
 
   // Where rendered .docx files are written (mount a PVC here in k8s)
+  // No longer used to store rendered documents (those are now stored as bytes
+  // in Postgres so they survive Render's ephemeral-disk restarts). Kept as a
+  // no-op env var in case other tooling still references it.
   outputDir: process.env.OUTPUT_DIR ?? "/data/outputs",
 
   // CORS origin for the frontend

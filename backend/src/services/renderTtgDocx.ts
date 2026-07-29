@@ -170,7 +170,7 @@ function headingParagraph(
 
 // ---- Title page -------------------------------------------------------------
 
-function titlePageChildren(doc: StructuredDoc): Paragraph[] {
+function titlePageChildren(doc: StructuredDoc): (Paragraph | Table)[] {
   const rightLabel = (text: string) =>
     new Paragraph({
       alignment: AlignmentType.RIGHT,
@@ -185,6 +185,7 @@ function titlePageChildren(doc: StructuredDoc): Paragraph[] {
     });
 
   return [
+    titlePageLetterhead(),
     // vertical breathing room so the block sits lower on the page
     new Paragraph({ spacing: { before: 3200, after: 0 }, children: [] }),
     // Company name — green, big (line height must clear 32pt text)
@@ -207,10 +208,14 @@ function titlePageChildren(doc: StructuredDoc): Paragraph[] {
   ];
 }
 
-// ---- Headers & footers ------------------------------------------------------
-
-/** Title-page header: TTG logo (left) + company/address block (right). */
-function titlePageHeader(): Header {
+/**
+ * Letterhead: TTG logo (left) + company/address block (right), as BODY
+ * content at the top of the title page — not a Header. An image inside a
+ * table inside a page Header is a known trouble spot (Google Docs' .docx
+ * importer in particular can silently drop it), and it only needs to render
+ * once anyway, so it lives with the rest of the title-page content instead.
+ */
+function titlePageLetterhead(): Table {
   // Display the logo ~1.35" wide, preserving aspect ratio.
   const logoWidthPx = 130;
   const logoHeightPx = Math.round((logoWidthPx * TTG_LOGO_HEIGHT) / TTG_LOGO_WIDTH);
@@ -245,45 +250,43 @@ function titlePageHeader(): Header {
     ),
   ];
 
-  return new Header({
-    children: [
-      new Table({
-        width: { size: usableTwips, type: WidthType.DXA },
-        columnWidths: [leftWidth, rightWidth],
-        borders: noBorders,
-        rows: [
-          new TableRow({
+  return new Table({
+    width: { size: usableTwips, type: WidthType.DXA },
+    columnWidths: [leftWidth, rightWidth],
+    borders: noBorders,
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            width: { size: leftWidth, type: WidthType.DXA },
+            verticalAlign: VerticalAlign.TOP,
+            margins: { top: 0, bottom: 0, left: 0, right: 0 },
             children: [
-              new TableCell({
-                width: { size: leftWidth, type: WidthType.DXA },
-                verticalAlign: VerticalAlign.TOP,
-                margins: { top: 0, bottom: 0, left: 0, right: 0 },
+              new Paragraph({
+                alignment: AlignmentType.LEFT,
+                spacing: { before: 0, after: 0 },
                 children: [
-                  new Paragraph({
-                    alignment: AlignmentType.LEFT,
-                    spacing: { before: 0, after: 0 },
-                    children: [
-                      new ImageRun({
-                        data: TTG_LOGO_PNG,
-                        transformation: { width: logoWidthPx, height: logoHeightPx },
-                      }),
-                    ],
+                  new ImageRun({
+                    data: TTG_LOGO_PNG,
+                    transformation: { width: logoWidthPx, height: logoHeightPx },
                   }),
                 ],
               }),
-              new TableCell({
-                width: { size: rightWidth, type: WidthType.DXA },
-                verticalAlign: VerticalAlign.TOP,
-                margins: { top: 0, bottom: 0, left: 0, right: 0 },
-                children: addressParas,
-              }),
             ],
+          }),
+          new TableCell({
+            width: { size: rightWidth, type: WidthType.DXA },
+            verticalAlign: VerticalAlign.TOP,
+            margins: { top: 0, bottom: 0, left: 0, right: 0 },
+            children: addressParas,
           }),
         ],
       }),
     ],
   });
 }
+
+// ---- Headers & footers ------------------------------------------------------
 
 /**
  * Running header on every non-title page: small black running title (left)
@@ -473,7 +476,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
       ],
     },
     sections: [
-      // Section 1 — Title page (own header/footer; no visible page number)
+      // Section 1 — Title page (letterhead is body content; no header, no visible page number)
       {
         properties: {
           page: {
@@ -486,7 +489,6 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
             },
           },
         },
-        headers: { default: titlePageHeader() },
         footers: { default: emptyFooter() },
         children: titlePageChildren(doc),
       },

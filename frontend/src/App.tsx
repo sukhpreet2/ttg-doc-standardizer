@@ -4,6 +4,8 @@ import { JobList } from "./components/JobList";
 import { listJobs } from "./api";
 import type { DocumentJob } from "./types";
 
+const ACTIVE_STATUSES = new Set(["pending", "extracting", "structuring", "rendering"]);
+
 export function App() {
   const [jobs, setJobs] = useState<DocumentJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -20,6 +22,16 @@ export function App() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Documents render in the background now (the POST returns as soon as the
+  // job is created), so poll while anything is still in flight to pick up
+  // status changes — extracting -> structuring -> rendering -> complete/failed.
+  const hasActiveJob = jobs.some((j) => ACTIVE_STATUSES.has(j.status));
+  useEffect(() => {
+    if (!hasActiveJob) return;
+    const interval = setInterval(refresh, 2000);
+    return () => clearInterval(interval);
+  }, [hasActiveJob, refresh]);
 
   return (
     <div className="app">

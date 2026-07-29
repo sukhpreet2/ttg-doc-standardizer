@@ -1,7 +1,4 @@
 import { Router, Request, Response, NextFunction } from "express";
-import * as fs from "fs/promises";
-import * as path from "path";
-import { config } from "../config";
 import { query, queryOne } from "../db";
 import { upload } from "../middleware/upload";
 import { extractContent, SUPPORTED_EXTENSIONS } from "../services/extract";
@@ -12,6 +9,19 @@ import type { StructuredDoc } from "../services/renderTtgDocx";
 import type { DocumentJob } from "../types";
 
 export const documentsRouter = Router();
+
+// Every column EXCEPT output_bytes. Render's free plan has no persistent
+// disk — any file written to the container's filesystem disappears the next
+// time the service spins down/up (idle timeout) or redeploys, which is what
+// was causing "This site can't be reached / ERR_INVALID_RESPONSE" on
+// download. The rendered .docx is stored as bytes in Postgres instead (the
+// one thing on the free plan that *does* persist), and is only selected by
+// the /download route — list/detail responses (polled every couple of
+// seconds while a job is in flight) never pull that payload over the wire.
+const LIST_COLUMNS = `
+  id, title, version, owner_name, owner_email, source_kind, source_filename,
+  status, structured_json, output_filename, error, created_by, created_at, updated_at
+`;
 
 function slugify(s: string): string {
   return (
@@ -41,7 +51,13 @@ async function updateStatus(id: number, status: string, error?: string): Promise
  * Accepts either:
  *   - multipart/form-data with a "file" field + metadata fields, OR
  *   - application/json with { title, version, ownerName, ownerEmail, content }
- * Runs the full pipeline and returns the finished job.
+ *
+ * Returns as soon as the job row is created (status "pending") — it does NOT
+ * wait for the pipeline to finish. Extraction/structuring/rendering happen in
+ * the background; the frontend polls GET /api/documents(/:id) for status.
+ * (Running the whole pipeline inside the request handler is what caused
+ * requests to hang and eventually 524 — cold starts + local-model loading +
+ * large documents can easily take well past any gateway's timeout.)
  */
 documentsRouter.post(
   "/",
@@ -60,6 +76,8 @@ documentsRouter.post(
       let content = "";
       let sourceKind: "upload" | "paste";
       let sourceFilename: string | null = null;
+      let fileBuffer: Buffer | null = null;
+      let originalName = "";
 
       if (req.file) {
         const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "";
@@ -70,6 +88,8 @@ documentsRouter.post(
         }
         sourceKind = "upload";
         sourceFilename = req.file.originalname;
+        fileBuffer = req.file.buffer;
+        originalName = req.file.originalname;
       } else if (req.body.content && String(req.body.content).trim()) {
         content = String(req.body.content);
         sourceKind = "paste";
@@ -82,58 +102,54 @@ documentsRouter.post(
         `INSERT INTO document_job
            (title, version, owner_name, owner_email, source_kind, source_filename, status, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)
-         RETURNING *`,
+         RETURNING ${LIST_COLUMNS}`,
         [title, version, ownerName, ownerEmail, sourceKind, sourceFilename, actor(req)]
       );
       if (!job) throw new Error("Failed to create job");
 
-      try {
-        // 1. Extract
-        if (req.file) {
-          await updateStatus(job.id, "extracting");
-          const { text } = await extractContent(req.file.buffer, req.file.originalname);
-          content = text;
+      // Respond right away — do not block on the pipeline.
+      res.status(202).json(job);
+
+      // Run the pipeline in the background. Errors are caught and written to
+      // the job row (status "failed"); nothing here can crash the request
+      // since the response was already sent.
+      void (async () => {
+        try {
+          if (fileBuffer) {
+            await updateStatus(job.id, "extracting");
+            const { text } = await extractContent(fileBuffer, originalName);
+            content = text;
+          }
+          if (!content.trim()) {
+            throw new Error("No readable content could be extracted from the source.");
+          }
+
+          await updateStatus(job.id, "structuring");
+          const structured = await structureContent({
+            title,
+            version,
+            ownerName,
+            ownerEmail,
+            content,
+          });
+
+          await updateStatus(job.id, "rendering");
+          const outputFilename = `${slugify(title)}-${job.id}.docx`;
+          const buffer = await renderTtgDocx(structured, outputFilename);
+
+          await query(
+            `UPDATE document_job
+               SET status='complete', structured_json=$2, output_filename=$3,
+                   output_bytes=$4, error=NULL, updated_at=now()
+             WHERE id=$1`,
+            [job.id, JSON.stringify(structured), outputFilename, buffer]
+          );
+        } catch (pipelineErr) {
+          const message =
+            pipelineErr instanceof Error ? pipelineErr.message : "Processing failed";
+          await updateStatus(job.id, "failed", message);
         }
-        if (!content.trim()) {
-          throw new Error("No readable content could be extracted from the source.");
-        }
-
-        // 2. Structure
-        await updateStatus(job.id, "structuring");
-        const structured = await structureContent({
-          title,
-          version,
-          ownerName,
-          ownerEmail,
-          content,
-        });
-
-        // 3. Render (manual TOC populates in Word on open; no post-processing needed)
-        await updateStatus(job.id, "rendering");
-        const outputFilename = `${slugify(title)}-${job.id}.docx`;
-        const buffer = await renderTtgDocx(structured, outputFilename);
-        await fs.mkdir(config.outputDir, { recursive: true });
-        await fs.writeFile(path.join(config.outputDir, outputFilename), buffer);
-
-        // 4. Complete
-        const finished = await queryOne<DocumentJob>(
-          `UPDATE document_job
-             SET status='complete', structured_json=$2, output_filename=$3, error=NULL, updated_at=now()
-           WHERE id=$1
-           RETURNING *`,
-          [job.id, JSON.stringify(structured), outputFilename]
-        );
-        return res.status(201).json(finished);
-      } catch (pipelineErr) {
-        const message =
-          pipelineErr instanceof Error ? pipelineErr.message : "Processing failed";
-        await updateStatus(job.id, "failed", message);
-        const failed = await queryOne<DocumentJob>(
-          `SELECT * FROM document_job WHERE id=$1`,
-          [job.id]
-        );
-        return res.status(422).json({ error: message, job: failed });
-      }
+      })();
     } catch (err) {
       next(err);
     }
@@ -144,7 +160,7 @@ documentsRouter.post(
 documentsRouter.get("/", async (_req, res, next) => {
   try {
     const rows = await query<DocumentJob>(
-      `SELECT * FROM document_job ORDER BY created_at DESC LIMIT 200`
+      `SELECT ${LIST_COLUMNS} FROM document_job ORDER BY created_at DESC LIMIT 200`
     );
     res.json(rows);
   } catch (err) {
@@ -155,9 +171,10 @@ documentsRouter.get("/", async (_req, res, next) => {
 /** GET /api/documents/:id */
 documentsRouter.get("/:id", async (req, res, next) => {
   try {
-    const row = await queryOne<DocumentJob>(`SELECT * FROM document_job WHERE id=$1`, [
-      req.params.id,
-    ]);
+    const row = await queryOne<DocumentJob>(
+      `SELECT ${LIST_COLUMNS} FROM document_job WHERE id=$1`,
+      [req.params.id]
+    );
     if (!row) return res.status(404).json({ error: "Not found" });
     res.json(row);
   } catch (err) {
@@ -165,27 +182,22 @@ documentsRouter.get("/:id", async (req, res, next) => {
   }
 });
 
-/** GET /api/documents/:id/download — stream the rendered .docx. */
+/** GET /api/documents/:id/download — stream the rendered .docx straight from the DB. */
 documentsRouter.get("/:id/download", async (req, res, next) => {
   try {
-    const row = await queryOne<DocumentJob>(`SELECT * FROM document_job WHERE id=$1`, [
-      req.params.id,
-    ]);
-    if (!row || !row.output_filename) {
+    const row = await queryOne<DocumentJob>(
+      `SELECT output_filename, output_bytes FROM document_job WHERE id=$1`,
+      [req.params.id]
+    );
+    if (!row || !row.output_filename || !row.output_bytes) {
       return res.status(404).json({ error: "No rendered document for this job" });
     }
-    const filePath = path.join(config.outputDir, row.output_filename);
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${row.output_filename}"`
-    );
-    res.sendFile(filePath, (err) => {
-      if (err) next(err);
-    });
+    res.setHeader("Content-Disposition", `attachment; filename="${row.output_filename}"`);
+    res.send(row.output_bytes);
   } catch (err) {
     next(err);
   }
@@ -194,9 +206,10 @@ documentsRouter.get("/:id/download", async (req, res, next) => {
 /** GET /api/documents/:id/preview — render the standardized document as HTML for in-browser viewing. */
 documentsRouter.get("/:id/preview", async (req, res, next) => {
   try {
-    const row = await queryOne<DocumentJob>(`SELECT * FROM document_job WHERE id=$1`, [
-      req.params.id,
-    ]);
+    const row = await queryOne<DocumentJob>(
+      `SELECT status, structured_json, output_filename, title FROM document_job WHERE id=$1`,
+      [req.params.id]
+    );
     if (!row) return res.status(404).json({ error: "Not found" });
     if (row.status !== "complete" || !row.structured_json) {
       return res.status(409).json({ error: "This document has not finished rendering yet." });
@@ -210,17 +223,14 @@ documentsRouter.get("/:id/preview", async (req, res, next) => {
   }
 });
 
-/** DELETE /api/documents/:id — remove the job and its file. */
+/** DELETE /api/documents/:id — remove the job (and its stored bytes). */
 documentsRouter.delete("/:id", async (req, res, next) => {
   try {
-    const row = await queryOne<DocumentJob>(`SELECT * FROM document_job WHERE id=$1`, [
-      req.params.id,
-    ]);
-    if (!row) return res.status(404).json({ error: "Not found" });
-    if (row.output_filename) {
-      await fs.rm(path.join(config.outputDir, row.output_filename), { force: true });
-    }
-    await query(`DELETE FROM document_job WHERE id=$1`, [req.params.id]);
+    const result = await query<{ id: number }>(
+      `DELETE FROM document_job WHERE id=$1 RETURNING id`,
+      [req.params.id]
+    );
+    if (!result.length) return res.status(404).json({ error: "Not found" });
     res.status(204).end();
   } catch (err) {
     next(err);

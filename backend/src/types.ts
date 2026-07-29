@@ -19,6 +19,7 @@ export interface DocumentJob {
   status: JobStatus;
   structured_json: unknown | null;
   output_filename: string | null;
+  output_bytes?: Buffer | null;
   error: string | null;
   created_by: string | null;
   created_at: string;

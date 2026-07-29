@@ -201,7 +201,19 @@ Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (requ
   (not a docx→HTML conversion, which loses direct color/size formatting), so it's
   a full round-trip of the same styling — not just an approximation.
 - **Logo.** The title page carries the TTG wordmark (spiral + "TARTIGRADE LIMITED")
-  top-left, aligned with the address block, matching the feature-spec template. It is
-  embedded as base64 in `backend/src/assets/logo.ts` (no file-path or Docker-copy
-  concerns); replace that file to swap the mark. The same base64 asset is reused by
-  the HTML preview.
+  top-left, aligned with the address block, matching the feature-spec template. It
+  renders as **body content on the title page itself** (not a page Header) — an
+  image inside a table inside a Header is a known trouble spot (Google Docs' .docx
+  importer in particular can silently drop it), and the letterhead only needs to
+  appear once anyway. It is embedded as base64 in `backend/src/assets/logo.ts` (no
+  file-path or Docker-copy concerns); replace that file to swap the mark. The same
+  base64 asset is reused by the HTML preview.
+- **Rendered documents are stored in Postgres, not on disk.** Render's free plan
+  has no persistent disk, so anything written to the container's filesystem is
+  gone the next time the service spins down/up (idle timeout) or redeploys —
+  that's what caused downloads to fail with "This site can't be reached /
+  ERR_INVALID_RESPONSE" for jobs that finished before a restart. The rendered
+  `.docx` is now stored as `bytea` on the `document_job` row and streamed
+  straight from the DB on `/download`. List/detail endpoints explicitly select
+  every column *except* that one, so polling the job list every couple of
+  seconds doesn't drag the binary payload along with it.
