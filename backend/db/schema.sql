@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS document_job (
   title           VARCHAR(255) NOT NULL,
   version         VARCHAR(50)  NOT NULL DEFAULT 'v1',
   owner_name      VARCHAR(255) NOT NULL,
+  owner_title     VARCHAR(255),
   owner_email     VARCHAR(255) NOT NULL,
 
   source_kind     VARCHAR(20)  NOT NULL
@@ -27,3 +28,6 @@ CREATE TABLE IF NOT EXISTS document_job (
 CREATE INDEX IF NOT EXISTS idx_document_job_created_at ON document_job (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_document_job_status     ON document_job (status);
 CREATE INDEX IF NOT EXISTS idx_document_job_created_by ON document_job (created_by);
+
+-- Safe to re-run: adds the column for databases created before owner_title existed.
+ALTER TABLE document_job ADD COLUMN IF NOT EXISTS owner_title VARCHAR(255);

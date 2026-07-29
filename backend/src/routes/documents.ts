@@ -49,6 +49,7 @@ documentsRouter.post(
       const title = (req.body.title || "").trim();
       const version = (req.body.version || "v1").trim();
       const ownerName = (req.body.ownerName || "").trim();
+      const ownerTitle = (req.body.ownerTitle || "").trim();
       const ownerEmail = (req.body.ownerEmail || "").trim();
 
       if (!title) return res.status(400).json({ error: "title is required" });
@@ -78,10 +79,10 @@ documentsRouter.post(
       // Create the job row up front so it is visible while processing.
       const job = await queryOne<DocumentJob>(
         `INSERT INTO document_job
-           (title, version, owner_name, owner_email, source_kind, source_filename, status, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)
+           (title, version, owner_name, owner_title, owner_email, source_kind, source_filename, status, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
          RETURNING *`,
-        [title, version, ownerName, ownerEmail, sourceKind, sourceFilename, actor(req)]
+        [title, version, ownerName, ownerTitle || null, ownerEmail, sourceKind, sourceFilename, actor(req)]
       );
       if (!job) throw new Error("Failed to create job");
 
@@ -102,6 +103,7 @@ documentsRouter.post(
           title,
           version,
           ownerName,
+          ownerTitle: ownerTitle || undefined,
           ownerEmail,
           content,
         });
@@ -109,7 +111,7 @@ documentsRouter.post(
         // 3. Render (manual TOC populates in Word on open; no post-processing needed)
         await updateStatus(job.id, "rendering");
         const outputFilename = `${slugify(title)}-${job.id}.docx`;
-        const buffer = await renderTtgDocx(structured, outputFilename);
+        const buffer = await renderTtgDocx(structured);
         await fs.mkdir(config.outputDir, { recursive: true });
         await fs.writeFile(path.join(config.outputDir, outputFilename), buffer);
 

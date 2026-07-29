@@ -3,15 +3,23 @@
  * -----------------
  * The heart of the standardizer. Takes a StructuredDoc (title/version/owner +
  * numbered sections) and produces a .docx that matches Tartigrade's exact report
- * standard:
+ * standard, calibrated pixel-for-pixel against the reference template
+ * ("Talent <-> Connect Bridge — Employee Onboarding Feature Spec"):
  *
- *   - Font:            Calibri throughout
- *   - Brand green:     #1F7A4D — labels & branding ONLY (never values/content)
- *   - Body text:       11pt (size 22), black
- *   - Headings H1-H4:  14pt (size 28), bold, black
- *   - Running header:  document title, green, 16pt (size 32) — non-title pages only
- *   - Title page:      right-aligned address block + big title + version/owner
- *   - Footer:          filename (left) + page number (right); hidden on title page
+ *   - Font:            Calibri throughout; Consolas for inline code / code blocks
+ *   - Brand green:     #5AA66A — labels, bullets, numbering & branding ONLY
+ *                      (never body prose/values)
+ *   - Body text:       11pt (size 22), near-black (#111111)
+ *   - Headings H1:     14pt (size 28), bold, near-black, numbered "N. Heading"
+ *   - Headings H2-H4:  14pt (size 28), bold, near-black, numbered "N.N Heading"
+ *                      (no trailing period on sub-numbers)
+ *   - Running header:  small (9pt) gray title, left; small brand mark, right;
+ *                       thin rule beneath — non-title pages only
+ *   - Title page:      right-aligned address block + big title + Document
+ *                       Version / Document Owners / Date, + decorative dot
+ *                       mark bottom-left
+ *   - Footer:          page number only, right-aligned, small gray — hidden on
+ *                       title page
  *   - Page:            US Letter (12240 x 15840 DXA), 1" margins (1440 DXA)
  *
  * The spec lives in ttg_report_generator SKILL.md; this is its programmatic form.
@@ -42,28 +50,41 @@ import {
   WidthType,
   BorderStyle,
   VerticalAlign,
+  HorizontalPositionAlign,
+  HorizontalPositionRelativeFrom,
+  VerticalPositionAlign,
+  VerticalPositionRelativeFrom,
+  TextWrappingType,
+  TextWrappingSide,
 } from "docx";
 import JSZip from "jszip";
 import { TTG_LOGO_PNG, TTG_LOGO_WIDTH, TTG_LOGO_HEIGHT } from "../assets/logo";
+import { TTG_DOTS_PNG, TTG_DOTS_WIDTH, TTG_DOTS_HEIGHT } from "../assets/dots";
 
 // ---- Brand constants (single source of truth) -------------------------------
+// Calibrated against the reference PDF by sampling actual pixel colors —
+// do not "round" these back to generic brand-guide values without re-checking.
 
-const GREEN = "1F7A4D";
-const BLACK = "000000";
+const GREEN = "5AA66A"; // labels, bullets, list numbers, branding — never body text
+const TEXT = "111111"; // near-black body/heading text (the doc is not pure #000)
+const GRAY = "666666"; // running header title + footer page number
 const FONT = "Calibri";
+const MONO_FONT = "Consolas"; // inline code spans / code blocks
 
 // half-point sizes (docx uses half-points: 11pt -> 22)
 const SIZE = {
   body: 22, // 11pt
   headerAddress: 22, // 11pt (title-page header lines)
   titleBig: 64, // 32pt (company name + doc title on title page)
-  titleLabel: 28, // 14pt ("Document Version" / "Document Owner")
-  runningHeader: 32, // 16pt (doc title in the running page header)
+  titleLabel: 28, // 14pt ("Document Version" / "Document Owners" / "Date")
+  runningHeader: 18, // 9pt (doc title in the running page header — small, not a heading)
+  footer: 18, // 9pt (page number)
   heading: 28, // 14pt (H1-H4)
 };
 
 const COMPANY = {
-  name: "Tartigrade (TTG)",
+  name: "Tartigrade Ltd. (TTG)", // as printed in the small header/address block
+  brandName: "TARTIGRADE (TTG)", // as printed big + green on the title page
   address: [
     "Suite 5803 - 655 Center St. S,",
     "Calgary, AB, T2G 1S6",
@@ -79,6 +100,8 @@ export interface StructuredSubsection {
   heading: string; // e.g. "Background"
   paragraphs: string[];
   bullets?: string[];
+  /** "bullet" (green dot, default) or "number" (green "1." "2." ...) */
+  bulletStyle?: "bullet" | "number";
 }
 
 export interface StructuredSection {
@@ -86,6 +109,8 @@ export interface StructuredSection {
   heading: string; // e.g. "Introduction"
   paragraphs: string[];
   bullets?: string[];
+  /** "bullet" (green dot, default) or "number" (green "1." "2." ...) */
+  bulletStyle?: "bullet" | "number";
   subsections?: StructuredSubsection[];
 }
 
@@ -93,19 +118,40 @@ export interface StructuredDoc {
   title: string;
   version: string;
   ownerName: string;
+  ownerTitle?: string; // e.g. "Software Developer" — printed under the owner's name
   ownerEmail: string;
+  date: string; // e.g. "2026-07-26" — printed on the title page as "Date"
   sections: StructuredSection[];
 }
 
 // ---- Small helpers ----------------------------------------------------------
 
-function run(text: string, opts: { size: number; color?: string; bold?: boolean }) {
+function run(text: string, opts: { size: number; color?: string; bold?: boolean; font?: string }) {
   return new TextRun({
     text: sanitizeXmlText(text),
-    font: FONT,
+    font: opts.font ?? FONT,
     size: opts.size,
-    color: opts.color ?? BLACK,
+    color: opts.color ?? TEXT,
     bold: opts.bold ?? false,
+  });
+}
+
+/**
+ * Split prose on backtick-delimited spans (`` `like this` ``) and render each
+ * piece as its own run: plain text stays body-styled, code spans render in
+ * green monospace — matching inline file paths / identifiers / routes in the
+ * reference document (e.g. "the file `foo.ts`", "`GET /intake`").
+ */
+function formatRuns(text: string, size: number): TextRun[] {
+  const parts = text.split(/(`[^`]+`)/g).filter((p) => p.length > 0);
+  if (parts.length <= 1 && !parts[0]?.startsWith("`")) {
+    return [run(text, { size })];
+  }
+  return parts.map((part) => {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
+      return run(part.slice(1, -1), { size, color: GREEN, font: MONO_FONT });
+    }
+    return run(part, { size });
   });
 }
 
@@ -122,20 +168,20 @@ function sanitizeXmlText(text: string): string {
   );
 }
 
-/** A body paragraph of plain prose. */
+/** A body paragraph of plain prose (with inline `code` span support). */
 function bodyParagraph(text: string): Paragraph {
   return new Paragraph({
     spacing: { before: 0, after: 120, line: 240 },
-    children: [run(text, { size: SIZE.body })],
+    children: formatRuns(text, SIZE.body),
   });
 }
 
-/** A single bullet item (level 0) using the shared numbering config. */
-function bulletParagraph(text: string, level = 0): Paragraph {
+/** A single bullet or numbered item using the shared numbering config. */
+function bulletParagraph(text: string, style: "bullet" | "number" = "bullet", level = 0): Paragraph {
   return new Paragraph({
-    numbering: { reference: "ttg-bullets", level },
+    numbering: { reference: style === "number" ? "ttg-numbers" : "ttg-bullets", level },
     spacing: { before: 0, after: 60, line: 240 },
-    children: [run(text, { size: SIZE.body })],
+    children: formatRuns(text, SIZE.body),
   });
 }
 
@@ -161,13 +207,32 @@ function headingParagraph(
     children: [
       new Bookmark({
         id: bookmarkName(number),
-        children: [run(numberedText, { size: SIZE.heading, bold: true, color: BLACK })],
+        children: [run(numberedText, { size: SIZE.heading, bold: true, color: TEXT })],
       }),
     ],
   });
 }
 
 // ---- Title page -------------------------------------------------------------
+
+/** The decorative spiral of brand-green dots, floating bottom-left, behind the text. */
+function titlePageDotMark(): Paragraph {
+  const sizePx = 260; // roughly a third of the page height, matching the reference
+  return new Paragraph({
+    children: [
+      new ImageRun({
+        data: TTG_DOTS_PNG,
+        transformation: { width: sizePx, height: Math.round((sizePx * TTG_DOTS_HEIGHT) / TTG_DOTS_WIDTH) },
+        floating: {
+          horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, align: HorizontalPositionAlign.LEFT },
+          verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, align: VerticalPositionAlign.BOTTOM },
+          wrap: { type: TextWrappingType.NONE, side: TextWrappingSide.BOTH_SIDES },
+          behindDocument: true,
+        },
+      }),
+    ],
+  });
+}
 
 function titlePageChildren(doc: StructuredDoc): Paragraph[] {
   const rightLabel = (text: string) =>
@@ -180,29 +245,33 @@ function titlePageChildren(doc: StructuredDoc): Paragraph[] {
     new Paragraph({
       alignment: AlignmentType.RIGHT,
       spacing: { before: 0, after: 0, line: 240 },
-      children: [run(text, { size: SIZE.body, color: BLACK })],
+      children: [run(text, { size: SIZE.body, color: TEXT })],
     });
 
   return [
+    titlePageDotMark(),
     // vertical breathing room so the block sits lower on the page
     new Paragraph({ spacing: { before: 3200, after: 0 }, children: [] }),
     // Company name — green, big (line height must clear 32pt text)
     new Paragraph({
       alignment: AlignmentType.RIGHT,
       spacing: { before: 0, after: 0, line: 760 },
-      children: [run(COMPANY.name, { size: SIZE.titleBig, color: GREEN })],
+      children: [run(COMPANY.brandName, { size: SIZE.titleBig, color: GREEN })],
     }),
     // Document title value — black, big (no label)
     new Paragraph({
       alignment: AlignmentType.RIGHT,
       spacing: { before: 0, after: 480, line: 760 },
-      children: [run(doc.title, { size: SIZE.titleBig, color: BLACK })],
+      children: [run(doc.title, { size: SIZE.titleBig, color: TEXT })],
     }),
     rightLabel("Document Version"),
     rightValue(doc.version),
-    rightLabel("Document Owner"),
+    rightLabel("Document Owners"),
     rightValue(doc.ownerName),
+    ...(doc.ownerTitle ? [rightValue(doc.ownerTitle)] : []),
     rightValue(doc.ownerEmail),
+    rightLabel("Date"),
+    rightValue(doc.date),
   ];
 }
 
@@ -232,14 +301,14 @@ function titlePageHeader(): Header {
     new Paragraph({
       alignment: AlignmentType.RIGHT,
       spacing: { before: 0, after: 0, line: 240 },
-      children: [run(COMPANY.name, { size: SIZE.headerAddress, color: GREEN, bold: true })],
+      children: [run(COMPANY.name, { size: SIZE.headerAddress, color: TEXT, bold: true })],
     }),
     ...COMPANY.address.map(
       (line) =>
         new Paragraph({
           alignment: AlignmentType.RIGHT,
           spacing: { before: 0, after: 0, line: 240 },
-          children: [run(line, { size: SIZE.headerAddress, color: BLACK })],
+          children: [run(line, { size: SIZE.headerAddress, color: TEXT })],
         })
     ),
   ];
@@ -284,32 +353,89 @@ function titlePageHeader(): Header {
   });
 }
 
-/** Running header on every non-title page: the document title in green, 16pt. */
+/**
+ * Running header on every non-title page: the document title, small and gray,
+ * left-aligned; a small brand mark, right-aligned; a thin rule underneath
+ * spanning the full text width. (Not a big green heading — that was wrong.)
+ */
 function runningHeader(title: string): Header {
+  const usableTwips = 9360; // Letter (12240) minus 1" margins each side
+  const leftWidth = 7200;
+  const rightWidth = usableTwips - leftWidth;
+  const markWidthPx = 42;
+  const markHeightPx = Math.round((markWidthPx * TTG_LOGO_HEIGHT) / TTG_LOGO_WIDTH);
+
+  const rule = { style: BorderStyle.SINGLE, size: 4, color: "D9D9D9" }; // thin light-gray rule
+  const noBorder = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
+  const borders = {
+    top: noBorder,
+    bottom: rule,
+    left: noBorder,
+    right: noBorder,
+    insideHorizontal: noBorder,
+    insideVertical: noBorder,
+  };
+
   return new Header({
     children: [
-      new Paragraph({
-        alignment: AlignmentType.LEFT,
-        spacing: { before: 0, after: 120, line: 240 },
-        children: [run(title, { size: SIZE.runningHeader, color: GREEN })],
+      new Table({
+        width: { size: usableTwips, type: WidthType.DXA },
+        columnWidths: [leftWidth, rightWidth],
+        borders,
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                width: { size: leftWidth, type: WidthType.DXA },
+                verticalAlign: VerticalAlign.BOTTOM,
+                margins: { top: 0, bottom: 80, left: 0, right: 0 },
+                borders,
+                children: [
+                  new Paragraph({
+                    alignment: AlignmentType.LEFT,
+                    spacing: { before: 0, after: 0, line: 240 },
+                    children: [run(title, { size: SIZE.runningHeader, color: GRAY })],
+                  }),
+                ],
+              }),
+              new TableCell({
+                width: { size: rightWidth, type: WidthType.DXA },
+                verticalAlign: VerticalAlign.BOTTOM,
+                margins: { top: 0, bottom: 80, left: 0, right: 0 },
+                borders,
+                children: [
+                  new Paragraph({
+                    alignment: AlignmentType.RIGHT,
+                    spacing: { before: 0, after: 0 },
+                    children: [
+                      new ImageRun({
+                        data: TTG_LOGO_PNG,
+                        transformation: { width: markWidthPx, height: markHeightPx },
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
       }),
     ],
   });
 }
 
-/** Footer with filename (left) and page number (right). */
-function bodyFooter(filename: string): Footer {
+/** Footer on every non-title page: page number only, right-aligned, small gray. */
+function bodyFooter(): Footer {
   return new Footer({
     children: [
       new Paragraph({
-        tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
+        alignment: AlignmentType.RIGHT,
         spacing: { before: 0, after: 0, line: 240 },
         children: [
-          run(filename, { size: SIZE.body }),
-          new TextRun({ text: "\t", font: FONT, size: SIZE.body }),
           new TextRun({
             font: FONT,
-            size: SIZE.body,
+            size: SIZE.footer,
+            color: GRAY,
             children: [PageNumber.CURRENT],
           }),
         ],
@@ -333,14 +459,16 @@ function sectionChildren(doc: StructuredDoc): Paragraph[] {
       headingParagraph(`${section.number}. ${section.heading}`, HeadingLevel.HEADING_1, section.number)
     );
     for (const p of section.paragraphs) out.push(bodyParagraph(p));
-    if (section.bullets) for (const b of section.bullets) out.push(bulletParagraph(b));
+    if (section.bullets)
+      for (const b of section.bullets) out.push(bulletParagraph(b, section.bulletStyle ?? "bullet"));
 
     for (const sub of section.subsections ?? []) {
       out.push(
-        headingParagraph(`${sub.number}. ${sub.heading}`, HeadingLevel.HEADING_2, sub.number)
+        headingParagraph(`${sub.number} ${sub.heading}`, HeadingLevel.HEADING_2, sub.number)
       );
       for (const p of sub.paragraphs) out.push(bodyParagraph(p));
-      if (sub.bullets) for (const b of sub.bullets) out.push(bulletParagraph(b));
+      if (sub.bullets)
+        for (const b of sub.bullets) out.push(bulletParagraph(b, sub.bulletStyle ?? "bullet"));
     }
   }
   return out;
@@ -357,7 +485,7 @@ function tocChildren(doc: StructuredDoc): Paragraph[] {
   const out: Paragraph[] = [
     new Paragraph({
       spacing: { before: 0, after: 240, line: 240 },
-      children: [run("Table of Contents", { size: SIZE.heading, bold: true, color: BLACK })],
+      children: [run("Table of Contents", { size: SIZE.heading, bold: true, color: TEXT })],
     }),
   ];
 
@@ -387,7 +515,7 @@ function tocChildren(doc: StructuredDoc): Paragraph[] {
 
 // ---- Assemble the document --------------------------------------------------
 
-export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promise<Buffer> {
+export async function renderTtgDocx(doc: StructuredDoc): Promise<Buffer> {
   const tocSection = tocChildren(doc);
 
   const document = new Document({
@@ -396,7 +524,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
     features: { updateFields: true },
     styles: {
       default: {
-        document: { run: { font: FONT, size: SIZE.body, color: BLACK } },
+        document: { run: { font: FONT, size: SIZE.body, color: TEXT } },
       },
       paragraphStyles: [
         {
@@ -405,7 +533,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
-          run: { font: FONT, size: SIZE.heading, bold: true, color: BLACK },
+          run: { font: FONT, size: SIZE.heading, bold: true, color: TEXT },
           paragraph: { spacing: { before: 240, after: 120, line: 240 }, outlineLevel: 0 },
         },
         {
@@ -414,7 +542,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
-          run: { font: FONT, size: SIZE.heading, bold: true, color: BLACK },
+          run: { font: FONT, size: SIZE.heading, bold: true, color: TEXT },
           paragraph: { spacing: { before: 200, after: 100, line: 240 }, outlineLevel: 1 },
         },
         {
@@ -423,7 +551,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
-          run: { font: FONT, size: SIZE.heading, bold: true, color: BLACK },
+          run: { font: FONT, size: SIZE.heading, bold: true, color: TEXT },
           paragraph: { spacing: { before: 160, after: 80, line: 240 }, outlineLevel: 2 },
         },
         {
@@ -432,7 +560,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
           basedOn: "Normal",
           next: "Normal",
           quickFormat: true,
-          run: { font: FONT, size: SIZE.heading, bold: true, color: BLACK },
+          run: { font: FONT, size: SIZE.heading, bold: true, color: TEXT },
           paragraph: { spacing: { before: 120, after: 60, line: 240 }, outlineLevel: 3 },
         },
       ],
@@ -447,14 +575,35 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
               format: LevelFormat.BULLET,
               text: "\u2022",
               alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+              style: {
+                paragraph: { indent: { left: 720, hanging: 360 } },
+                run: { color: GREEN, bold: true, font: FONT },
+              },
             },
             {
               level: 1,
               format: LevelFormat.BULLET,
               text: "\u25CB",
               alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 1080, hanging: 360 } } },
+              style: {
+                paragraph: { indent: { left: 1080, hanging: 360 } },
+                run: { color: GREEN, bold: true, font: FONT },
+              },
+            },
+          ],
+        },
+        {
+          reference: "ttg-numbers",
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.DECIMAL,
+              text: "%1.",
+              alignment: AlignmentType.LEFT,
+              style: {
+                paragraph: { indent: { left: 720, hanging: 360 } },
+                run: { color: GREEN, bold: true, font: FONT },
+              },
             },
           ],
         },
@@ -492,7 +641,7 @@ export async function renderTtgDocx(doc: StructuredDoc, filename: string): Promi
           },
         },
         headers: { default: runningHeader(doc.title) },
-        footers: { default: bodyFooter(filename) },
+        footers: { default: bodyFooter() },
         children: [...tocSection, new Paragraph({ children: [], pageBreakBefore: true }), ...sectionChildren(doc)],
       },
     ],

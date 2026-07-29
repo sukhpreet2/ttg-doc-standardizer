@@ -23,6 +23,7 @@ export interface StructureInput {
   title: string;
   version: string;
   ownerName: string;
+  ownerTitle?: string;
   ownerEmail: string;
   content: string;
 }
