@@ -184,6 +184,32 @@ Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (requ
 - **Scaling file storage.** Rendered files sit on a ReadWriteOnce PVC, so the backend
   runs 1 replica. To scale out, switch to a ReadWriteMany volume or store the `.docx`
   in object storage (S3/GCS) and stream on download.
+- **Known remaining limitation: dense schema tables.** PDF extraction can lose
+  the spacing between table cells (a "Column | Type | Notes" row becomes
+  "ColumnTypeNotes"); most of this is now filtered as noise (see above), but
+  a row whose "Notes" cell is a full sentence can be long enough to slip
+  past the filter with its squished column-header prefix still attached
+  (e.g. `idSERIALPK` at the start of an otherwise-fine sentence). This
+  mainly shows up in heavily tabular sections (database schema, audit-log
+  columns). The tool condenses to prose rather than reconstructing actual
+  Word tables from source tables, so very table-dense sections are the
+  weakest case; flag it if this needs tightening further.
+- **Preserves existing document structure.** If the source already has real
+  numbered section headings (a spec, a report with its own outline — like
+  "1. Core concepts & principles" ... "13. Access control", including
+  numbered subsections like "3.1"), that structure is detected and kept
+  as-is: same headings, same order, same nesting. Only content with no such
+  structure (raw notes, a rough draft) gets routed through the generic
+  Introduction / Executive Summary / Conclusion template. Detection lives in
+  `backend/src/services/structurers/headings.ts` — it has to tell a real
+  heading apart from a Table of Contents entry or an ordinary numbered list
+  embedded in a paragraph, both of which are syntactically identical to a
+  heading; see the comments there for how.
+- **Paragraph noise-filtering is per-line, not per-block.** On PDF-extracted
+  text, blank lines are sparse enough that an entire page can be one block;
+  a single embedded diagram or table row anywhere in that block used to
+  discard every real paragraph along with it. It now drops only the
+  offending line, so the prose around a diagram or table survives.
 - **The TTG standard** lives in one place: the constants at the top of
   `backend/src/services/renderTtgDocx.ts` (green, sizes, address block). Change them
   there and every future document updates. `renderTtgHtml.ts` imports those same
