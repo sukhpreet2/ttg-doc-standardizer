@@ -184,6 +184,20 @@ Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (requ
 - **Scaling file storage.** Rendered files sit on a ReadWriteOnce PVC, so the backend
   runs 1 replica. To scale out, switch to a ReadWriteMany volume or store the `.docx`
   in object storage (S3/GCS) and stream on download.
+- **PDF extraction uses `pdfjs-dist` directly, not `pdf-parse`.** `pdf-parse`
+  bundles its own frozen copy of pdf.js from 2017-2018 with no way to update
+  it, and chokes on how some modern PDF producers embed fonts — symptom: a
+  bare `unsupported Unicode escape sequence` crash (no page number) next to
+  `TT: undefined function` font-hinting warnings in the logs. `pdfjs-dist` is
+  actively maintained and handles these cases; font rendering is disabled
+  since only text is needed, and each page is extracted in its own try/catch
+  so one corrupted page can't take down the rest of the document. Since
+  `pdfjs-dist` is ESM-only and this backend is CommonJS, it's loaded through
+  a runtime-constructed `import()` in `extract.ts` (`new Function("specifier",
+  "return import(specifier)")`) — a plain `await import(...)` gets rewritten
+  by `tsc` into a `require()` call when targeting CommonJS, which throws
+  `ERR_REQUIRE_ESM` for a real `.mjs` package; building the call at runtime
+  keeps it invisible to that transform.
 - **Known remaining limitation: dense schema tables.** PDF extraction can lose
   the spacing between table cells (a "Column | Type | Notes" row becomes
   "ColumnTypeNotes"); most of this is now filtered as noise (see above), but

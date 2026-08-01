@@ -5,17 +5,13 @@
  * structuring stage can work format-agnostically. Mirrors the coverage of the
  * existing summary-generator / excel-summary-generator skills:
  *   - .docx            -> mammoth
- *   - .pdf             -> pdf-parse
+ *   - .pdf             -> pdfjs-dist
  *   - .xlsx/.xls/.csv  -> SheetJS (every tab, in tab order)
  *   - .txt/.md/others  -> utf-8 text
  */
 
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
-
-// pdf-parse ships as CommonJS with a debug side-effect on import; require lazily.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfParse: (b: Buffer) => Promise<{ text: string }> = require("pdf-parse");
 
 export interface ExtractResult {
   text: string;
@@ -32,9 +28,58 @@ async function extractDocx(buffer: Buffer): Promise<string> {
   return value;
 }
 
+// tsc rewrites a literal `await import(...)` into `require(...)` when
+// targeting CommonJS, which throws ERR_REQUIRE_ESM for a real ESM-only
+// package like pdfjs-dist. Building the import call at runtime (invisible
+// to tsc's static transform) keeps it a genuine dynamic import.
+const dynamicImport = new Function("specifier", "return import(specifier)") as (
+  specifier: string
+) => Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")>;
+
+/**
+ * pdfjs-dist is ESM-only (no CJS build), so it's imported dynamically even
+ * though this file is CommonJS. Using pdfjs-dist directly instead of the
+ * unmaintained `pdf-parse` package matters: pdf-parse bundles its own copy
+ * of pdf.js frozen at v1.9–v2.0 (2017-2018), which chokes on how some modern
+ * PDF producers embed fonts (symptom: a bare "unsupported Unicode escape
+ * sequence" crash with no page number, alongside "TT: undefined function"
+ * font-hinting warnings). pdfjs-dist is actively maintained and handles
+ * these cases; font rendering itself is disabled since we only need text.
+ */
 async function extractPdf(buffer: Buffer): Promise<string> {
-  const { text } = await pdfParse(buffer);
-  return text;
+  const pdfjsLib = await dynamicImport("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    disableFontFace: true,
+    useSystemFonts: false,
+    verbosity: 0,
+  });
+
+  try {
+    const doc = await loadingTask.promise;
+    let text = "";
+    for (let i = 1; i <= doc.numPages; i++) {
+      try {
+        const page = await doc.getPage(i);
+        const content = await page.getTextContent();
+        let lastY: number | null = null;
+        for (const item of content.items as Array<{ str: string; transform: number[] }>) {
+          const y = item.transform?.[5] ?? null;
+          if (lastY !== null && y !== lastY) text += "\n";
+          text += item.str;
+          lastY = y;
+        }
+        text += "\n\n";
+      } catch {
+        // One corrupted/unsupported page (bad embedded font, malformed
+        // content stream, ...) should not take down the whole document —
+        // skip it and keep every other page's text.
+      }
+    }
+    return text;
+  } finally {
+    await loadingTask.destroy();
+  }
 }
 
 function extractSpreadsheet(buffer: Buffer): string {
