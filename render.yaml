@@ -24,9 +24,10 @@ services:
         fromDatabase:
           name: ttg-doc-standardizer-db
           property: connectionString
-      # Free plan has no persistent disk, so rendered .docx files live on the
-      # container's ephemeral filesystem and are lost on restart/redeploy.
-      # Fine for light/demo use. Upgrade to a paid plan + `disk:` to persist them.
+      # No longer used to store rendered documents — those are stored as
+      # bytes in Postgres now, since the free plan's disk is ephemeral and
+      # was wiping completed documents on every restart/redeploy. Kept as a
+      # harmless no-op env var.
       - key: OUTPUT_DIR
         value: /data/outputs
       # Must exactly match the frontend's origin (no wildcard support in the
@@ -34,11 +35,19 @@ services:
       # ttg-doc-standardizer-2 due to a name collision with the guessed name).
       - key: CORS_ORIGIN
         value: "https://ttg-doc-standardizer-2.onrender.com"
-      # "heuristic" = pure-JS keyword routing, no model download, low memory.
-      # Free web services have 512MB RAM, which is tight for the ONNX zero-shot
-      # model. Switch to "transformers" if you upgrade to a paid plan.
+      # Structuring engine — "groq" (best quality, needs GROQ_API_KEY below)
+      # > "transformers" (local ONNX model, needs a paid plan's RAM headroom)
+      # > "heuristic" (pure-JS keyword routing, no model, lowest memory).
+      # Falls back automatically at each level if the one above it fails.
       - key: STRUCTURER
         value: heuristic
+      # Only read when STRUCTURER=groq. sync:false means Render will prompt
+      # for this in the dashboard instead of storing it in this file — set
+      # it there, never commit a real key to source control.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
       - key: MAX_UPLOAD_BYTES
         value: "15728640"
 

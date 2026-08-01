@@ -20,8 +20,10 @@ export const documentsRouter = Router();
 // seconds while a job is in flight) never pull that payload over the wire.
 const LIST_COLUMNS = `
   id, title, version, owner_name, owner_email, source_kind, source_filename,
-  status, structured_json, output_filename, error, created_by, created_at, updated_at
+  status, structured_json, output_filename, custom_prompt, error, created_by, created_at, updated_at
 `;
+
+const MAX_CUSTOM_PROMPT_CHARS = 2000;
 
 function slugify(s: string): string {
   return (
@@ -73,6 +75,11 @@ documentsRouter.post(
       if (!ownerName) return res.status(400).json({ error: "ownerName is required" });
       if (!ownerEmail) return res.status(400).json({ error: "ownerEmail is required" });
 
+      const customPromptRaw = (req.body.customPrompt ?? "").toString().trim();
+      const customPrompt = customPromptRaw
+        ? customPromptRaw.slice(0, MAX_CUSTOM_PROMPT_CHARS)
+        : null;
+
       let content = "";
       let sourceKind: "upload" | "paste";
       let sourceFilename: string | null = null;
@@ -100,10 +107,10 @@ documentsRouter.post(
       // Create the job row up front so it is visible while processing.
       const job = await queryOne<DocumentJob>(
         `INSERT INTO document_job
-           (title, version, owner_name, owner_email, source_kind, source_filename, status, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)
+           (title, version, owner_name, owner_email, source_kind, source_filename, custom_prompt, status, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
          RETURNING ${LIST_COLUMNS}`,
-        [title, version, ownerName, ownerEmail, sourceKind, sourceFilename, actor(req)]
+        [title, version, ownerName, ownerEmail, sourceKind, sourceFilename, customPrompt, actor(req)]
       );
       if (!job) throw new Error("Failed to create job");
 
@@ -131,6 +138,7 @@ documentsRouter.post(
             ownerName,
             ownerEmail,
             content,
+            customPrompt: customPrompt ?? undefined,
           });
 
           await updateStatus(job.id, "rendering");

@@ -16,6 +16,7 @@ export interface DocumentJob {
   source_filename: string | null;
   status: JobStatus;
   output_filename: string | null;
+  custom_prompt: string | null;
   error: string | null;
   created_by: string | null;
   created_at: string;

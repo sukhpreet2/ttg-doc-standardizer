@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS document_job (
   output_bytes    BYTEA,             -- the rendered .docx itself, stored in the DB
                                       -- (Render's free plan has no persistent disk —
                                       --  files written to disk vanish on restart/redeploy)
+  custom_prompt   TEXT,              -- optional free-form instructions from the requester
+                                      -- (only acted on when STRUCTURER=groq; stored regardless)
   error           TEXT,              -- last error, if failed
 
   created_by      VARCHAR(255),      -- from the auth proxy (X-User-Email)
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS document_job (
 
 -- Safe to re-run: adds the column for deployments that predate it.
 ALTER TABLE document_job ADD COLUMN IF NOT EXISTS output_bytes BYTEA;
+ALTER TABLE document_job ADD COLUMN IF NOT EXISTS custom_prompt TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_document_job_created_at ON document_job (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_document_job_status     ON document_job (status);

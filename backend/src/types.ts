@@ -20,6 +20,7 @@ export interface DocumentJob {
   structured_json: unknown | null;
   output_filename: string | null;
   output_bytes?: Buffer | null;
+  custom_prompt: string | null;
   error: string | null;
   created_by: string | null;
   created_at: string;
@@ -35,4 +36,7 @@ export interface CreateJobInput {
   sourceFilename: string | null;
   content: string;
   createdBy: string | null;
+  /** Optional free-form instructions for what the standardized output should
+   *  emphasize/focus on/skip. Only acted on when STRUCTURER=groq. */
+  customPrompt: string | null;
 }

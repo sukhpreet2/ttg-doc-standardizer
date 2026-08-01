@@ -18,26 +18,49 @@ the whole team can use.
   Upload / paste content
           │
           ▼
-   ┌──────────────┐   ┌───────────────┐   ┌─────────────────┐   ┌──────────────┐
-   │  1. Extract  │──▶│ 2. Structure  │──▶│   3. Render      │──▶│ 4. Store +   │
-   │ docx/pdf/xls │   │ (local model  │   │ (docx-js → the   │   │  download    │
-   │  → plain text│   │  → TTG sections)│ │  TTG standard)   │   │  (.docx)     │
-   └──────────────┘   └───────────────┘   └─────────────────┘   └──────────────┘
+   ┌──────────────┐   ┌────────────────┐   ┌─────────────────┐   ┌──────────────┐
+   │  1. Extract  │──▶│ 2. Structure   │──▶│   3. Render      │──▶│ 4. Store +   │
+   │ docx/pdf/xls │   │ (preserve      │   │ (docx-js → the   │   │  download    │
+   │  → plain text│   │  structure, or │   │  TTG standard)   │   │  (.docx)     │
+   │              │   │  groq/local    │   │                  │   │              │
+   │              │   │  model)        │   │                  │   │              │
+   └──────────────┘   └────────────────┘   └─────────────────┘   └──────────────┘
 ```
 
-1. **Extract** — `mammoth` (docx), `pdf-parse` (pdf), `SheetJS` (xlsx/csv, every tab
-   in order), or UTF-8 text. Covers the same formats as your summary skills.
-2. **Structure** — a **local pre-trained zero-shot model** (Hugging Face, run
-   in-process via Transformers.js / ONNX — no external API, no API key) reads each
-   paragraph and routes it to the right TTG section. Introduction / Executive Summary
-   / Conclusion are always present; optional sections appear only when the content
-   supports them. Prose is condensed with a built-in extractive summarizer. If the
-   model can't load, a pure-JS keyword structurer takes over automatically.
+The whole pipeline runs **in the background** — `POST /api/documents` returns as
+soon as the job is created (`status: "pending"`), and the frontend polls for status
+(`extracting → structuring → rendering → complete/failed`). Running it inline in the
+request used to cause hangs and gateway timeouts on anything but a tiny document.
+
+1. **Extract** — `mammoth` (docx), `pdfjs-dist` (pdf, extracted per-page so one
+   corrupted page can't fail the whole document), `SheetJS` (xlsx/csv, every tab in
+   order), or UTF-8 text. Output is sanitized (stray NUL/control characters and
+   unpaired UTF-16 surrogates removed — both are real artifacts of corrupted/subsetted
+   PDF fonts and will otherwise break the `jsonb` write in step 4).
+2. **Structure** — first checks whether the source **already has real section
+   structure** (numbered headings like a spec or report's own outline, including
+   nested subsections) and preserves it exactly if so — see
+   `structurers/headings.ts`. Only genuinely unstructured content (notes, a rough
+   draft) gets organized from scratch, by one of three interchangeable structurers,
+   in order of preference:
+   - **`groq`** — an LLM (Groq API) structures the whole document in one step and
+     can follow a free-form **custom prompt** from the person requesting the
+     document (what to emphasize, focus on, or skip). Needs `GROQ_API_KEY`.
+   - **`transformers`** — a local pre-trained zero-shot model (Transformers.js /
+     ONNX, no API key) routes each paragraph to the right TTG section.
+   - **`heuristic`** — pure-JS keyword routing (no model, no API key, lowest memory).
+
+   Each tier falls back automatically to the next on any failure — a Groq outage or
+   missing key never breaks the app, it just quietly drops to local structuring.
 3. **Render** — `renderTtgDocx.ts` reproduces the TTG standard programmatically
    (the spec from `ttg_report_generator_SKILL.md`). Output validates against the
-   OOXML schema.
-4. **Store** — the `.docx` is written to a mounted volume and a row is recorded in
-   Postgres so anyone can find and re-download past documents.
+   OOXML schema. The same `StructuredDoc` also renders to HTML for the in-browser
+   **preview** (`renderTtgHtml.ts`), sharing the same brand constants so the two can
+   never visually drift apart.
+4. **Store** — the rendered `.docx` is stored as bytes directly in Postgres (not the
+   container's filesystem — Render's free plan has no persistent disk, and files
+   written there vanish on every restart/redeploy) alongside a row recording the job,
+   so anyone can find and re-download past documents.
 
 ---
 
@@ -129,7 +152,10 @@ is enough. Edit the host in `k8s/ingress.yaml`.
 | `PORT` | HTTP port | `4000` |
 | `DATABASE_URL` | Postgres connection string | local dev value |
 | `OUTPUT_DIR` | Where rendered `.docx` files are written (mount a PVC here) | `/data/outputs` |
-| `STRUCTURER` | `transformers` (local model) or `heuristic` (pure-JS, no model) | `transformers` |
+| `STRUCTURER` | `groq` (LLM, best quality) / `transformers` (local model) / `heuristic` (pure-JS, no model) — falls back automatically at each level on failure | `transformers` |
+| `GROQ_API_KEY` | Groq API key, only read when `STRUCTURER=groq`. Get one at [console.groq.com/keys](https://console.groq.com/keys) — set as a real secret (Render dashboard / k8s Secret), never commit it | — |
+| `GROQ_MODEL` | Groq model id | `llama-3.3-70b-versatile` |
+| `GROQ_TIMEOUT_MS` | Max time to wait for a Groq response before falling back | `45000` |
 | `ZEROSHOT_MODEL` | Hugging Face model id (Transformers.js/ONNX) | `Xenova/nli-deberta-v3-xsmall` |
 | `TRANSFORMERS_CACHE_DIR` | Where model weights are cached | `/models` |
 | `TRANSFORMERS_OFFLINE` | Run offline (weights pre-baked); `false` allows download | `true` |
@@ -142,7 +168,7 @@ is enough. Edit the host in `k8s/ingress.yaml`.
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| POST | `/api/documents` | multipart (`file` + metadata) **or** JSON (`content` + metadata) → runs the pipeline, returns the finished job |
+| POST | `/api/documents` | multipart (`file` + metadata) **or** JSON (`content` + metadata) → creates the job (`202`, `status: "pending"`) and runs the pipeline in the background; poll `GET /api/documents/:id` for status |
 | GET | `/api/documents` | list jobs (newest first) |
 | GET | `/api/documents/:id` | one job |
 | GET | `/api/documents/:id/download` | download the rendered `.docx` |
@@ -151,7 +177,9 @@ is enough. Edit the host in `k8s/ingress.yaml`.
 | GET | `/healthz`, `/readyz` | health / readiness |
 
 Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (required),
-`ownerEmail` (required).
+`ownerEmail` (required), `customPrompt` (optional, max 2000 chars — free-form instructions
+for what the output should emphasize/focus on/skip; only acted on when `STRUCTURER=groq`,
+but stored on the job either way).
 
 ---
 
@@ -161,14 +189,19 @@ Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (requ
   Put your existing Keycloak/OIDC auth proxy in front of the ingress and have it
   inject that header (nginx already forwards it). This mirrors the auth approach in
   your Connect / Talent-Connect specs.
-- **Structuring model.** The default `transformers` structurer runs a local
+- **Structuring quality tiers.** `STRUCTURER=groq` gives the best results and is the
+  only tier that understands a custom prompt, but costs an API call per document and
+  needs `GROQ_API_KEY` (get one at [console.groq.com/keys](https://console.groq.com/keys)).
+  The default `transformers` structurer runs a local
   zero-shot classification model (`Xenova/nli-deberta-v3-xsmall`, ~a few hundred MB)
   entirely in-process — no external API, no key. It's baked into the backend image at
   build time (`scripts/prewarm.mjs`) so runtime is fully offline. To swap models set
   `ZEROSHOT_MODEL` to any Transformers.js-compatible zero-shot model. Set
   `STRUCTURER=heuristic` to skip the model entirely (pure-JS keyword routing) — useful
   for the smallest possible image or air-gapped builds. The model runs on CPU; expect
-  a second or two per document.
+  a second or two per document. All three tiers are skipped entirely — structure
+  preserved as-is — for source content that already has real numbered section
+  headings; see `structurers/headings.ts`.
 - **Input quality.** The tool shines on prose (pasted text, narrative docs, reports).
   Very table-/schema-dense PDFs (e.g. raw DDL dumps) don't extract into clean prose in
   any text pipeline, so their summaries are weaker; the extractor drops obvious

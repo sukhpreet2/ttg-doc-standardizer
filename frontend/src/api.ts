@@ -23,6 +23,7 @@ export interface StandardizeInput {
   ownerEmail: string;
   file?: File | null;
   content?: string;
+  customPrompt?: string;
 }
 
 export async function standardize(input: StandardizeInput): Promise<DocumentJob> {
@@ -31,6 +32,7 @@ export async function standardize(input: StandardizeInput): Promise<DocumentJob>
   form.append("version", input.version);
   form.append("ownerName", input.ownerName);
   form.append("ownerEmail", input.ownerEmail);
+  if (input.customPrompt?.trim()) form.append("customPrompt", input.customPrompt.trim());
 
   if (input.file) form.append("file", input.file);
   else if (input.content) form.append("content", input.content);

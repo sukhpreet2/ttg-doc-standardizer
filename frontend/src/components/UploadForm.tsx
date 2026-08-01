@@ -16,6 +16,7 @@ export function UploadForm({ onCreated }: Props) {
   const [ownerEmail, setOwnerEmail] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [content, setContent] = useState("");
+  const [customPrompt, setCustomPrompt] = useState("");
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +29,7 @@ export function UploadForm({ onCreated }: Props) {
     setOwnerEmail("");
     setFile(null);
     setContent("");
+    setCustomPrompt("");
   }
 
   function onDrop(e: DragEvent<HTMLDivElement>) {
@@ -59,6 +61,7 @@ export function UploadForm({ onCreated }: Props) {
         ownerEmail: ownerEmail.trim(),
         file: mode === "upload" ? file : null,
         content: mode === "paste" ? content : undefined,
+        customPrompt: customPrompt.trim() || undefined,
       });
       onCreated(job);
       reset();
@@ -167,6 +170,23 @@ export function UploadForm({ onCreated }: Props) {
       )}
 
       {error && <div className="error">{error}</div>}
+
+      <div className="field" style={{ marginTop: 16 }}>
+        <label htmlFor="customPrompt">
+          Custom instructions <span style={{ fontWeight: 400, color: "var(--muted)" }}>(optional)</span>
+        </label>
+        <textarea
+          id="customPrompt"
+          value={customPrompt}
+          onChange={(e) => setCustomPrompt(e.target.value)}
+          placeholder="e.g. Focus on the API endpoints and skip the database schema. Keep it brief."
+          rows={3}
+        />
+        <small style={{ color: "var(--muted)" }}>
+          Only used when the AI structurer is enabled on this deployment — otherwise it's saved with the
+          job but not acted on.
+        </small>
+      </div>
 
       <div style={{ marginTop: 16 }}>
         <button className="primary" onClick={submit} disabled={busy} type="button">
