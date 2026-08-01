@@ -82,6 +82,27 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   }
 }
 
+/**
+ * Strip characters that are valid in a JS string but not safe downstream:
+ * a NUL byte or other C0 control character embedded in extracted text is
+ * a very common artifact of a corrupted/subsetted font (a glyph that fails
+ * to map to a real Unicode codepoint often resolves to U+0000). JSON.stringify
+ * happily encodes that as a literal \u0000 escape — perfectly valid per the
+ * JSON spec — but PostgreSQL's `jsonb` type rejects it outright with
+ * "unsupported Unicode escape sequence", which is what actually failed here
+ * (downstream of extraction, when saving structured_json — not extraction
+ * itself, which is why swapping the PDF library alone didn't change the
+ * error). Unpaired UTF-16 surrogates (another common PDF/font artifact) are
+ * replaced with U+FFFD for the same reason: valid JS string content, but
+ * invalid UTF-8 once encoded, which breaks JSON/XML consumers downstream.
+ */
+function sanitizeText(text: string): string {
+  return text
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "") // C0 controls except \t \n \r
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD") // unpaired high surrogate
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD"); // unpaired low surrogate
+}
+
 function extractSpreadsheet(buffer: Buffer): string {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const parts: string[] = [];
@@ -103,26 +124,29 @@ export async function extractContent(
   filename: string
 ): Promise<ExtractResult> {
   const e = ext(filename);
-  switch (e) {
-    case "docx":
-      return { text: await extractDocx(buffer), detectedType: "docx" };
-    case "pdf":
-      return { text: await extractPdf(buffer), detectedType: "pdf" };
-    case "xlsx":
-    case "xlsm":
-    case "xls":
-    case "csv":
-    case "tsv":
-      return { text: extractSpreadsheet(buffer), detectedType: e };
-    case "txt":
-    case "md":
-    case "markdown":
-    case "json":
-      return { text: buffer.toString("utf-8"), detectedType: e || "txt" };
-    default:
-      // Best-effort: treat unknown types as utf-8 text.
-      return { text: buffer.toString("utf-8"), detectedType: e || "unknown" };
-  }
+  const result = await (async (): Promise<ExtractResult> => {
+    switch (e) {
+      case "docx":
+        return { text: await extractDocx(buffer), detectedType: "docx" };
+      case "pdf":
+        return { text: await extractPdf(buffer), detectedType: "pdf" };
+      case "xlsx":
+      case "xlsm":
+      case "xls":
+      case "csv":
+      case "tsv":
+        return { text: extractSpreadsheet(buffer), detectedType: e };
+      case "txt":
+      case "md":
+      case "markdown":
+      case "json":
+        return { text: buffer.toString("utf-8"), detectedType: e || "txt" };
+      default:
+        // Best-effort: treat unknown types as utf-8 text.
+        return { text: buffer.toString("utf-8"), detectedType: e || "unknown" };
+    }
+  })();
+  return { ...result, text: sanitizeText(result.text) };
 }
 
 export const SUPPORTED_EXTENSIONS = [

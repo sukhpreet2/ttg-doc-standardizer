@@ -184,6 +184,19 @@ Metadata fields: `title` (required), `version` (default `v1`), `ownerName` (requ
 - **Scaling file storage.** Rendered files sit on a ReadWriteOnce PVC, so the backend
   runs 1 replica. To scale out, switch to a ReadWriteMany volume or store the `.docx`
   in object storage (S3/GCS) and stream on download.
+- **Extracted text is sanitized before it goes anywhere else.** The
+  `"unsupported Unicode escape sequence"` failure some documents hit turned
+  out to be a PostgreSQL error, not a PDF-parsing error: a NUL character
+  embedded in extracted text (a common artifact of a corrupted/subsetted
+  font glyph that fails to map to a real Unicode codepoint) is perfectly
+  valid in a JS string and in `JSON.stringify`'s output, but Postgres's
+  `jsonb` type rejects a `\u0000` escape outright with that exact message —
+  so the failure showed up when saving `structured_json`, downstream of
+  extraction entirely, which is why swapping the PDF library alone didn't
+  change the error text. `extract.ts` now strips NUL/control characters and
+  repairs unpaired UTF-16 surrogates on every extraction path's output
+  (PDF, docx, spreadsheet, plain text) in one place, before anything else
+  touches it.
 - **PDF extraction uses `pdfjs-dist` directly, not `pdf-parse`.** `pdf-parse`
   bundles its own frozen copy of pdf.js from 2017-2018 with no way to update
   it, and chokes on how some modern PDF producers embed fonts — symptom: a
