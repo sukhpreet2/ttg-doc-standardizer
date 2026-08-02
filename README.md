@@ -294,6 +294,14 @@ but stored on the job either way).
   appear once anyway. It is embedded as base64 in `backend/src/assets/logo.ts` (no
   file-path or Docker-copy concerns); replace that file to swap the mark. The same
   base64 asset is reused by the HTML preview.
+- **Title-page swirl decoration.** The spiral-of-dots graphic in the lower-left of
+  the title page (`backend/src/assets/swirl.ts`, same base64-embedding approach as
+  the logo) is a **floating image** in the `.docx` — anchored to the page rather
+  than the text flow, positioned via `align: left` relative to the page margin and
+  a fixed vertical offset from the page top — so it can sit independently of the
+  right-aligned title/version/owner block sharing the same vertical space on the
+  page. The HTML preview reproduces the same placement with plain absolute CSS
+  positioning inside the `.sheet` div.
 - **Rendered documents are stored in Postgres, not on disk.** Render's free plan
   has no persistent disk, so anything written to the container's filesystem is
   gone the next time the service spins down/up (idle timeout) or redeploys —

@@ -43,9 +43,14 @@ import {
   WidthType,
   BorderStyle,
   VerticalAlign,
+  HorizontalPositionRelativeFrom,
+  HorizontalPositionAlign,
+  VerticalPositionRelativeFrom,
+  TextWrappingType,
 } from "docx";
 import JSZip from "jszip";
 import { TTG_LOGO_PNG, TTG_LOGO_WIDTH, TTG_LOGO_HEIGHT } from "../assets/logo";
+import { TTG_SWIRL_PNG, TTG_SWIRL_WIDTH, TTG_SWIRL_HEIGHT } from "../assets/swirl";
 
 // ---- Brand constants (single source of truth) -------------------------------
 
@@ -186,6 +191,7 @@ function titlePageChildren(doc: StructuredDoc): (Paragraph | Table)[] {
 
   return [
     titlePageLetterhead(),
+    titlePageSwirl(),
     // vertical breathing room so the block sits lower on the page
     new Paragraph({ spacing: { before: 3200, after: 0 }, children: [] }),
     // Company name — green, big (line height must clear 32pt text)
@@ -206,6 +212,42 @@ function titlePageChildren(doc: StructuredDoc): (Paragraph | Table)[] {
     rightValue(doc.ownerName),
     rightValue(doc.ownerEmail),
   ];
+}
+
+/**
+ * Title-page decoration: a spiral of green dots, floating in the lower-left
+ * of the page — matching the reference TTG standard. It's a floating image
+ * (anchored to the page, not the text flow) so it can sit independently of
+ * the right-aligned title/version/owner block sharing the same vertical
+ * space; the paragraph it's attached to carries no visible text of its own.
+ */
+function titlePageSwirl(): Paragraph {
+  const widthIn = 2.5;
+  const heightIn = widthIn * (TTG_SWIRL_HEIGHT / TTG_SWIRL_WIDTH);
+  const widthPx = Math.round(widthIn * 96);
+  const heightPx = Math.round(heightIn * 96);
+  const topOffsetEmu = Math.round(6.3 * 914400); // ~6.3" down the 11" page
+
+  return new Paragraph({
+    children: [
+      new ImageRun({
+        data: TTG_SWIRL_PNG,
+        transformation: { width: widthPx, height: heightPx },
+        floating: {
+          horizontalPosition: {
+            relative: HorizontalPositionRelativeFrom.MARGIN,
+            align: HorizontalPositionAlign.LEFT,
+          },
+          verticalPosition: {
+            relative: VerticalPositionRelativeFrom.PAGE,
+            offset: topOffsetEmu,
+          },
+          wrap: { type: TextWrappingType.SQUARE },
+          allowOverlap: true,
+        },
+      }),
+    ],
+  });
 }
 
 /**

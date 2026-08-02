@@ -15,6 +15,7 @@
 
 import { GREEN, BLACK, FONT, SIZE, COMPANY, type StructuredDoc } from "./renderTtgDocx";
 import { TTG_LOGO_PNG_BASE64 } from "../assets/logo";
+import { TTG_SWIRL_PNG_BASE64 } from "../assets/swirl";
 
 // half-point docx sizes -> CSS pt
 const pt = (halfPoints: number) => halfPoints / 2;
@@ -155,6 +156,13 @@ export function renderTtgHtml(doc: StructuredDoc, filename: string): string {
     margin-top: 14px;
   }
   .title-page .value { font-size: ${pt(SIZE.body)}pt; }
+  .swirl {
+    position: absolute;
+    left: 1in;
+    top: 6.3in;
+    width: 2.5in;
+    height: auto;
+  }
 
   .running-header {
     display: flex;
@@ -250,6 +258,7 @@ export function renderTtgHtml(doc: StructuredDoc, filename: string): string {
         <div class="value">${escapeHtml(doc.ownerName)}</div>
         <div class="value">${escapeHtml(doc.ownerEmail)}</div>
       </div>
+      <img class="swirl" src="data:image/png;base64,${TTG_SWIRL_PNG_BASE64}" alt="" />
     </div>
 
     <!-- TOC + body -->

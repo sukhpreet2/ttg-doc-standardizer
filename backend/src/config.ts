@@ -7,6 +7,30 @@ function required(name: string, fallback?: string): string {
   return v;
 }
 
+type Structurer = "groq" | "heuristic" | "transformers";
+const VALID_STRUCTURERS: Structurer[] = ["groq", "heuristic", "transformers"];
+
+/**
+ * Trims whitespace and normalizes case before matching, and — unlike a bare
+ * strict-equality check — logs a clear warning when STRUCTURER was actually
+ * set to something that doesn't match any known value, instead of silently
+ * falling back to "transformers" with zero trace of why. A stray trailing
+ * space/newline from a copy-paste into a dashboard input, or a case typo,
+ * used to be indistinguishable from "not set at all".
+ */
+function parseStructurer(raw: string | undefined): Structurer {
+  if (!raw || !raw.trim()) return "transformers";
+  const normalized = raw.trim().toLowerCase() as Structurer;
+  if (VALID_STRUCTURERS.includes(normalized)) return normalized;
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[config] STRUCTURER=${JSON.stringify(raw)} is not one of ${VALID_STRUCTURERS.join(
+      ", "
+    )} — falling back to "transformers". Check for a typo or stray whitespace.`
+  );
+  return "transformers";
+}
+
 export const config = {
   port: parseInt(process.env.PORT ?? "4000", 10),
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -19,11 +43,7 @@ export const config = {
   //                    Understands a user-supplied custom prompt; best quality.
   //   "transformers" = local pre-trained zero-shot model (Transformers.js/ONNX)
   //   "heuristic"    = pure-JS keyword routing (no model download, no API)
-  structurer: (["groq", "heuristic", "transformers"] as const).includes(
-    process.env.STRUCTURER as "groq" | "heuristic" | "transformers"
-  )
-    ? (process.env.STRUCTURER as "groq" | "heuristic" | "transformers")
-    : "transformers",
+  structurer: parseStructurer(process.env.STRUCTURER),
   // Local zero-shot model (Hugging Face id, ONNX/Transformers.js compatible).
   zeroShotModel: process.env.ZEROSHOT_MODEL ?? "Xenova/nli-deberta-v3-xsmall",
   // Where model weights are cached (pre-downloaded at Docker build).
