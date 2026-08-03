@@ -141,9 +141,10 @@ export function renderTtgHtml(doc: StructuredDoc, filename: string): string {
   .title-page { text-align: right; margin-top: 60px; }
   .title-page .company-name {
     color: var(--green);
-    font-size: ${pt(SIZE.titleBig)}pt;
+    font-size: ${pt(SIZE.titleLabel)}pt;
     font-weight: 400;
-    line-height: 1.15;
+    line-height: 1.4;
+    margin-bottom: 8px;
   }
   .title-page .doc-title {
     font-size: ${pt(SIZE.titleBig)}pt;
@@ -250,7 +251,7 @@ export function renderTtgHtml(doc: StructuredDoc, filename: string): string {
         </div>
       </div>
       <div class="title-page">
-        <div class="company-name">${escapeHtml(COMPANY.name)}</div>
+        <div class="company-name">${escapeHtml(COMPANY.name.toUpperCase())}</div>
         <div class="doc-title">${escapeHtml(doc.title)}</div>
         <div class="label">Document Version</div>
         <div class="value">${escapeHtml(doc.version)}</div>

@@ -194,11 +194,12 @@ function titlePageChildren(doc: StructuredDoc): (Paragraph | Table)[] {
     titlePageSwirl(),
     // vertical breathing room so the block sits lower on the page
     new Paragraph({ spacing: { before: 3200, after: 0 }, children: [] }),
-    // Company name — green, big (line height must clear 32pt text)
+    // Company kicker — small, green, ALL CAPS (matches the reference standard;
+    // it is NOT the same giant size as the title below it).
     new Paragraph({
       alignment: AlignmentType.RIGHT,
-      spacing: { before: 0, after: 0, line: 760 },
-      children: [run(COMPANY.name, { size: SIZE.titleBig, color: GREEN })],
+      spacing: { before: 0, after: 240, line: 240 },
+      children: [run(COMPANY.name.toUpperCase(), { size: SIZE.titleLabel, color: GREEN })],
     }),
     // Document title value — black, big (no label)
     new Paragraph({
